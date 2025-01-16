@@ -24,6 +24,8 @@ FirebaseData fbdo;
 FirebaseAuth auth;
 FirebaseConfig firebaseConfig;
 
+int counter =0; 
+
 void setup()
 {
     Serial.begin(115200);
@@ -119,12 +121,13 @@ bool uploadImageToFirebase(camera_fb_t *fb)
     }
 
     char path[32];
-    snprintf(path, sizeof(path), "/images/%lu.jpg", millis());
+    snprintf(path, sizeof(path), "/images/%lu.jpg", counter);
 
     Serial.println("Uploading image...");
     if (Firebase.Storage.upload(&fbdo, STORAGE_BUCKET_ID, fb->buf, fb->len, path, "image/jpeg"))
     {
         Serial.println("Image uploaded successfully");
+        counter+=1;
         return true;
     }
     else
