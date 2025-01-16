@@ -1,32 +1,40 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <Firebase_ESP_Client.h>
+#include <addons/TokenHelper.h>
+#include <esp_heap_caps.h>
+#include <esp_system.h>
 
 // Select camera model
 #define CAMERA_MODEL_M5STACK_PSRAM // M5Stack with PSRAM
 #include "camera_pins.h"
 
 // Wi-Fi credentials
-const char *ssid = "*******";        // Replace with your Wi-Fi SSID
-const char *password = "**********"; // Replace with your Wi-Fi password
+// Wi-Fi credentials
+const char *ssid = "*******";     // Replace with your Wi-Fi SSID
+const char *password = "*******"; // Replace with your Wi-Fi password
 
 // Firebase project credentials
-#define STORAGE_BUCKET_ID "*********" // Replace with your Storage Bucket ID
-#define API_KEY "***************"           // Replace with your Firebase API Key
-#define USER_EMAIL "**************"                        // Optional user email for authentication
-#define USER_PASSWORD "*************"                                   // Optional user password for authentication
+#define STORAGE_BUCKET_ID "********" // Replace with your Storage Bucket ID
+#define API_KEY "*******"            // Replace with your Firebase API Key
+#define USER_EMAIL "********"        // Optional user email for authentication
+#define USER_PASSWORD "********"     // Optional user password for authentication
 
 FirebaseData fbdo;
 FirebaseAuth auth;
 FirebaseConfig firebaseConfig;
 
-void startCameraServer();
-
 void setup()
 {
     Serial.begin(115200);
-    Serial.setDebugOutput(true);
     Serial.println();
+
+    // Initialize PSRAM
+    if (!psramInit())
+    {
+        Serial.println("PSRAM initialization failed");
+        return;
+    }
 
     // Camera configuration
     camera_config_t config;
@@ -51,25 +59,34 @@ void setup()
     config.xclk_freq_hz = 20000000;
     config.pixel_format = PIXFORMAT_JPEG;
 
+    // Optimize camera settings for stability and quality
     if (psramFound())
     {
-        config.frame_size = FRAMESIZE_UXGA;
-        config.jpeg_quality = 10;
-        config.fb_count = 2;
+        config.frame_size = FRAMESIZE_SVGA; // 解像度800x600
+        config.jpeg_quality = 10;           // 高品質
+        config.fb_count = 2;                // 複数バッファを使用
     }
     else
     {
-        config.frame_size = FRAMESIZE_SVGA;
-        config.jpeg_quality = 12;
-        config.fb_count = 1;
+        config.frame_size = FRAMESIZE_VGA; // 解像度640x480
+        config.jpeg_quality = 12;          // 低品質
+        config.fb_count = 1;               // バッファ数を1に制限
     }
 
-    // Initialize camera
-    esp_err_t err = esp_camera_init(&config);
-    if (err != ESP_OK)
+    if (esp_camera_init(&config) != ESP_OK)
     {
-        Serial.printf("Camera init failed with error 0x%x\n", err);
+        Serial.println("Camera init failed");
         return;
+    }
+
+    // Adjust camera sensor settings
+    sensor_t *s = esp_camera_sensor_get();
+    if (s)
+    {
+        s->set_brightness(s, 0);
+        s->set_contrast(s, 1);
+        s->set_saturation(s, 0);
+        s->set_sharpness(s, 1);
     }
 
     // Connect to Wi-Fi
@@ -83,9 +100,7 @@ void setup()
 
     // Initialize Firebase
     firebaseConfig.api_key = API_KEY;
-
-    // firebaseConfig.storage_bucket_id = STORAGE_BUCKET_ID;
-
+    firebaseConfig.token_status_callback = tokenStatusCallback;
     auth.user.email = USER_EMAIL;
     auth.user.password = USER_PASSWORD;
 
@@ -93,67 +108,53 @@ void setup()
     Firebase.reconnectWiFi(true);
 
     Serial.println("Firebase initialized");
-    
 }
 
-void fcsUploadCallback(FCS_UploadStatusInfo info)
+bool uploadImageToFirebase(camera_fb_t *fb)
 {
-    if (info.status == firebase_fcs_upload_status_init)
+    if (WiFi.status() != WL_CONNECTED)
     {
-        Serial.printf("Uploading file %s (%d) to %s\n", info.localFileName.c_str(), info.fileSize, info.remoteFileName.c_str());
-    }
-    else if (info.status == firebase_fcs_upload_status_upload)
-    {
-        Serial.printf("Uploaded %d%s, Elapsed time %d ms\n", (int)info.progress, "%", info.elapsedTime);
-    }
-    else if (info.status == firebase_fcs_upload_status_complete)
-    {
-        Serial.println("Upload completed\n");
-        FileMetaInfo meta = fbdo.metaData();
-        Serial.printf("Name: %s\n", meta.name.c_str());
-        Serial.printf("Bucket: %s\n", meta.bucket.c_str());
-        Serial.printf("contentType: %s\n", meta.contentType.c_str());
-        Serial.printf("Size: %d\n", meta.size);
-        Serial.printf("Generation: %lu\n", meta.generation);
-        Serial.printf("Metageneration: %lu\n", meta.metageneration);
-        Serial.printf("ETag: %s\n", meta.etag.c_str());
-        Serial.printf("CRC32: %s\n", meta.crc32.c_str());
-        Serial.printf("Tokens: %s\n", meta.downloadTokens.c_str());
-        Serial.printf("Download URL: %s\n\n", fbdo.downloadURL().c_str());
-    }
-    else if (info.status == firebase_fcs_upload_status_error)
-    {
-        Serial.printf("Upload failed, %s\n", info.errorMsg.c_str());
-    }
-}
-
-void uploadImageToFirebase()
-{
-    camera_fb_t *fb = esp_camera_fb_get();
-    if (!fb)
-    {
-        Serial.println("Camera capture failed");
-        return;
+        Serial.println("WiFi not connected");
+        return false;
     }
 
-    String path = "/images/" + String(millis()) + ".jpg"; // Unique path for each image
+    char path[32];
+    snprintf(path, sizeof(path), "/images/%lu.jpg", millis());
 
-    Serial.println("Uploading to Firebase...");
-    if (Firebase.Storage.upload(&fbdo, STORAGE_BUCKET_ID, fb->buf, fb->len, path.c_str(), "image/jpeg", fcsUploadCallback))
+    Serial.println("Uploading image...");
+    if (Firebase.Storage.upload(&fbdo, STORAGE_BUCKET_ID, fb->buf, fb->len, path, "image/jpeg"))
     {
-        Serial.println("Upload successful: " + fbdo.downloadURL());
+        Serial.println("Image uploaded successfully");
+        return true;
     }
     else
     {
-        Serial.println("Upload failed: " + fbdo.errorReason());
+        Serial.println("Image upload failed");
+        return false;
     }
-
-    esp_camera_fb_return(fb);
 }
 
 void loop()
 {
-    uploadImageToFirebase();
-    delay(60000); // Wait for 1 minute
-}
+    static uint32_t lastTime = 0;
+    const uint32_t interval = 20000; // 1 minute
 
+    if (millis() - lastTime > interval)
+    {
+        lastTime = millis();
+
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (!fb)
+        {
+            Serial.println("Camera capture failed");
+            return;
+        }
+
+        if (!uploadImageToFirebase(fb))
+        {
+            Serial.println("Retrying upload in next cycle...");
+        }
+
+        esp_camera_fb_return(fb);
+    }
+}
