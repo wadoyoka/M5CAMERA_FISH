@@ -4,27 +4,123 @@
 #include <addons/TokenHelper.h>
 #include <esp_heap_caps.h>
 #include <esp_system.h>
+#include <ArduinoJson.h> // FirebaseJson を扱いやすくするため
+#include <HTTPClient.h>
+#include <base64.h>
 
 // Select camera model
 #define CAMERA_MODEL_M5STACK_PSRAM // M5Stack with PSRAM
 #include "camera_pins.h"
 
-// Wi-Fi credentials
-// Wi-Fi credentials
-const char *ssid = "*******";     // Replace with your Wi-Fi SSID
-const char *password = "*******"; // Replace with your Wi-Fi password
-
 // Firebase project credentials
+#define FIREBASE_PROJECT_ID "secret"              // プロジェクトID
 #define STORAGE_BUCKET_ID "********" // Replace with your Storage Bucket ID
 #define API_KEY "*******"            // Replace with your Firebase API Key
 #define USER_EMAIL "********"        // Optional user email for authentication
 #define USER_PASSWORD "********"     // Optional user password for authentication
 
+// Slack Webhook URL
+const char *slackWebhookUrl = "https://hooks.slack.com/services/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";
+
 FirebaseData fbdo;
 FirebaseAuth auth;
 FirebaseConfig firebaseConfig;
 
-int counter =0; 
+int counter = 0;
+
+bool getLatestData()
+{
+    String documentPath = "slackMessage";
+
+    Serial.print("Querying Firestore for latest data...");
+
+    if (Firebase.Firestore.getDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str()))
+    {
+        Serial.println("Query successful!");
+        // Serial.printf("ok\n%s\n\n", fbdo.payload().c_str());
+        // Firebase JSON からドキュメントIDを取得
+        DynamicJsonDocument doc(2048); // 必要に応じてサイズを調整
+        deserializeJson(doc, fbdo.payload().c_str());
+
+        // document.name フィールドの確認
+        if (!doc["documents"].isNull() && doc["documents"].size() > 0)
+        {
+            String documentStatus = doc["documents"][0]["fields"]["status"]["booleanValue"].as<String>();
+            Serial.println("JsonParse successful!");
+            return documentStatus.equals("true");
+        }
+        else
+        {
+            Serial.println("No documents found or documents array is empty!");
+            return false;
+        }
+    }
+    else
+    {
+        Serial.println("Query failed: ");
+        Serial.println(fbdo.errorReason());
+        return false;
+    }
+}
+
+void updateStatus()
+{
+    if (Firebase.ready())
+    {
+        String collection = "slackMessage";
+        String documentPath = "/slackStatus";
+        documentPath = collection + documentPath;
+        FirebaseJson content;
+
+        content.set("fields/status/booleanValue", false);
+
+        // まずは更新を試みる
+        if (Firebase.Firestore.patchDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), content.raw(), ""))
+        {
+            Serial.println("Data updated in Firestore successfully!");
+        }
+        else
+        {
+            Serial.println("Data updated in Firestore Failed");
+        }
+    }
+    else
+    {
+        Serial.println("Firebase is not ready");
+    }
+}
+
+// Slackにメッセージを送信する関数
+void sendSlackMessage(camera_fb_t *fb)
+{
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        HTTPClient http;
+        http.begin(slackWebhookUrl);
+        http.addHeader("Content-Type", "application/json");
+
+        // Slackが画像のBase64エンコードをサポートする場合
+        String payload = "{\"blocks\": [{\"type\": \"image\", \"image_url\": \"data:image/jpeg;base64,";
+        payload += base64::encode(fb->buf, fb->len); // 画像をBase64エンコード
+        payload += "\",\"alt_text\":\"ESP32 Camera Image\"}]}";
+
+        int httpResponseCode = http.POST(payload);
+        if (httpResponseCode > 0)
+        {
+            Serial.printf("Slack message sent successfully! HTTP Response code: %d\n", httpResponseCode);
+        }
+        else
+        {
+            Serial.printf("Error sending Slack message: %s\n", http.errorToString(httpResponseCode).c_str());
+        }
+
+        http.end();
+    }
+    else
+    {
+        Serial.println("WiFi not connected!");
+    }
+}
 
 void setup()
 {
@@ -112,40 +208,13 @@ void setup()
     Serial.println("Firebase initialized");
 }
 
-bool uploadImageToFirebase(camera_fb_t *fb)
-{
-    if (WiFi.status() != WL_CONNECTED)
-    {
-        Serial.println("WiFi not connected");
-        return false;
-    }
-
-    char path[32];
-    snprintf(path, sizeof(path), "/images/%lu.jpg", counter);
-
-    Serial.println("Uploading image...");
-    if (Firebase.Storage.upload(&fbdo, STORAGE_BUCKET_ID, fb->buf, fb->len, path, "image/jpeg"))
-    {
-        Serial.println("Image uploaded successfully");
-        counter+=1;
-        return true;
-    }
-    else
-    {
-        Serial.println("Image upload failed");
-        return false;
-    }
-}
-
 void loop()
 {
-    static uint32_t lastTime = 0;
-    const uint32_t interval = 20000; // 1 minute
+    delay(5000);
 
-    if (millis() - lastTime > interval)
+    if (getLatestData())
     {
-        lastTime = millis();
-
+        Serial.println("============Update Mode=========");
         camera_fb_t *fb = esp_camera_fb_get();
         if (!fb)
         {
@@ -153,11 +222,11 @@ void loop()
             return;
         }
 
-        if (!uploadImageToFirebase(fb))
-        {
-            Serial.println("Retrying upload in next cycle...");
-        }
+        sendSlackMessage(fb);
 
+        delay(2000);
+        updateStatus();
+        delay(2000);
         esp_camera_fb_return(fb);
     }
 }
