@@ -12,6 +12,9 @@
 #define CAMERA_MODEL_M5STACK_PSRAM // M5Stack with PSRAM
 #include "camera_pins.h"
 
+const char *ssid = "*******";     // Replace with your Wi-Fi SSID
+const char *password = "*******"; // Replace with your Wi-Fi password
+
 // Firebase project credentials
 #define FIREBASE_PROJECT_ID "secret"              // プロジェクトID
 #define STORAGE_BUCKET_ID "********" // Replace with your Storage Bucket ID
@@ -19,14 +22,9 @@
 #define USER_EMAIL "********"        // Optional user email for authentication
 #define USER_PASSWORD "********"     // Optional user password for authentication
 
-// Slack Webhook URL
-const char *slackWebhookUrl = "https://hooks.slack.com/services/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";
-
 FirebaseData fbdo;
 FirebaseAuth auth;
 FirebaseConfig firebaseConfig;
-
-int counter = 0;
 
 bool getLatestData()
 {
@@ -90,35 +88,27 @@ void updateStatus()
     }
 }
 
-// Slackにメッセージを送信する関数
-void sendSlackMessage(camera_fb_t *fb)
+bool uploadImageToFirebase(camera_fb_t *fb)
 {
-    if (WiFi.status() == WL_CONNECTED)
+    if (WiFi.status() != WL_CONNECTED)
     {
-        HTTPClient http;
-        http.begin(slackWebhookUrl);
-        http.addHeader("Content-Type", "application/json");
+        Serial.println("WiFi not connected");
+        return false;
+    }
 
-        // Slackが画像のBase64エンコードをサポートする場合
-        String payload = "{\"blocks\": [{\"type\": \"image\", \"image_url\": \"data:image/jpeg;base64,";
-        payload += base64::encode(fb->buf, fb->len); // 画像をBase64エンコード
-        payload += "\",\"alt_text\":\"ESP32 Camera Image\"}]}";
+    char path[32];
+    snprintf(path, sizeof(path), "/images/CPS.jpg");
 
-        int httpResponseCode = http.POST(payload);
-        if (httpResponseCode > 0)
-        {
-            Serial.printf("Slack message sent successfully! HTTP Response code: %d\n", httpResponseCode);
-        }
-        else
-        {
-            Serial.printf("Error sending Slack message: %s\n", http.errorToString(httpResponseCode).c_str());
-        }
-
-        http.end();
+    Serial.println("Uploading image...");
+    if (Firebase.Storage.upload(&fbdo, STORAGE_BUCKET_ID, fb->buf, fb->len, path, "image/jpeg"))
+    {
+        Serial.println("Image uploaded successfully");
+        return true;
     }
     else
     {
-        Serial.println("WiFi not connected!");
+        Serial.println("Image upload failed");
+        return false;
     }
 }
 
@@ -222,10 +212,11 @@ void loop()
             return;
         }
 
-        sendSlackMessage(fb);
-
-        delay(2000);
-        updateStatus();
+        if (uploadImageToFirebase(fb))
+        {
+            delay(2000);
+            updateStatus();
+        }
         delay(2000);
         esp_camera_fb_return(fb);
     }
