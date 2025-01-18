@@ -256,12 +256,6 @@ void loop()
 {
     delay(5000);
     camera_fb_t *fb = esp_camera_fb_get();
-    if (!fb)
-    {
-        Serial.println("Camera capture failed");
-        esp_camera_fb_return(fb);
-        return;
-    }
     // Wi-Fiの接続状態をチェックし、再接続を試みる
     if (reconnectWiFi())
     {
