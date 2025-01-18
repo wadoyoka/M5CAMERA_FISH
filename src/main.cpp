@@ -173,7 +173,7 @@ void setup()
     {
         config.frame_size = FRAMESIZE_SVGA; // 解像度800x600
         config.jpeg_quality = 10;           // 高品質
-        config.fb_count = 2;                // 複数バッファを使用
+        config.fb_count = 1;                // 複数バッファを使用
     }
     else
     {
@@ -255,7 +255,8 @@ bool reconnectWiFi()
 void loop()
 {
     delay(5000);
-    camera_fb_t *fb = esp_camera_fb_get();
+    camera_fb_t *fb = NULL;
+    fb = esp_camera_fb_get();
     if (!fb)
     {
         Serial.println("Camera capture failed");
