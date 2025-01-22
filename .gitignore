@@ -5,3 +5,4 @@
 .vscode/ipch
 
 test/secret.cpp
+test/SoracomMonitor_with_AWS/secret.cpp
