@@ -14,23 +14,23 @@
 #include "camera_pins.h"
 
 //WIFI 情報
-const char *ssid = "**********";
-const char *password = "**********";
+const char *ssid = "YOUR_WIFI_SSID";
+const char *password = "YOUT_WIFI_PASSWORD";
 
 // SORACOMのhttpエントリポイント情報
-const char *serverUrl = "**********";
+const char *serverUrl = "SORACOM_HTTP";
 
 // SORACOMのmqqtエントリポイント情報
-const char *mqtt_server = "***********";
+const char *mqtt_server = "*******";
 const int mqtt_port = 9999;
-const char *mqtt_topic = "********";
+const char *mqtt_topic = "******";
 
 // SORACOM ArcのWireGuard情報
-const char *private_key = "*********";
+const char *private_key = "***********";
 IPAddress local_ip(0, 0, 0, 0); // SORACOM ArcのIPアドレス (例)
-const char *peer_public_key = "****************";
-const char *endpoint_address = "**************";
-const int endpoint_port = 999999; // WireGuardのデフォルトポート
+const char *peer_public_key = "***********************";
+const char *endpoint_address = "**********************";
+const int endpoint_port = 9999; // WireGuardのデフォルトポート
 
 WiFiClient espClient;
 PubSubClient client(espClient);
